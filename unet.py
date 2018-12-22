@@ -1,7 +1,6 @@
 import torch
 import sys
 import math
-import cv2
 import pickle
 import random
 import progressbar
@@ -17,27 +16,21 @@ from PIL import Image
 from collections import OrderedDict
 from skimage import io, transform
 import random
-import matplotlib as mpl
 import matplotlib.pyplot as plt
 import os
 import pandas as pd
-import numpy as np
-import os
-from PIL import Image
 from sklearn.model_selection import train_test_split
 
-#print(os.getcwd())
-TRAIN = '/floyd/input/ships/train/'
-TEST = '/floyd/input/ships/test/'
-LOGS= '/floyd/home/logs/'
-LABELS='/floyd/input/ships/train_ship_segmentations_v2.csv'
+TRAIN = './data/train/'
+TEST = './data/test/'
+LOGS= './logs/'
+LABELS='./data/train_ship_segmentations_v2.csv'
 ORIG_IMG_SIZE=768
 IMG_SIZE=224
 BATCH_SIZE=128
 LEARNING_RATE=0.001
 device='cuda'
-#if gpu:
-#    device='cuda'
+
 exclude_list = ['6384c3e78.jpg','13703f040.jpg', '14715c06d.jpg',  '33e0ff2d5.jpg',
                 '4d4e09f2a.jpg', '877691df8.jpg', '8b909bb20.jpg', 'a8d99130e.jpg',
                 'ad55c3143.jpg', 'c8260c541.jpg', 'd6c7f17c7.jpg', 'dc3e7c901.jpg',
@@ -56,17 +49,21 @@ num_positive_ex=42556
 positive_ratio=num_positive_ex/(num_positive_ex+num_negative_ex)
 negative_ratio=num_negative_ex/(num_positive_ex+num_negative_ex)
 
-#non_empty_names=[x for x in all_names if (type(segmentation_df.loc[x]['EncodedPixels'])!=float)]
-#with open('nonempty.txt', 'wb') as file:
-#    pickle.dump(non_empty_names, file)
+#list of all images containing ships
 with open('nonempty.txt', 'rb') as file:
     non_empty_names=pickle.load(file)
 print('found non empty',len(non_empty_names))
-#non_empty_names=non_empty_names[0:100]
 nonempty_train_names, nonempty_val_names = train_test_split(non_empty_names, test_size=0.05, random_state=42)
 
 
 def get_mask(img_id, df):
+    '''
+    Args:
+        img_id: image id
+        df: dataframe with mask in run-length encoding
+    Returns:
+        img: binary mask image with
+    '''
     shape = (ORIG_IMG_SIZE,ORIG_IMG_SIZE)
     img = np.zeros(shape[0]*shape[1], dtype=np.uint8)
     masks = df.loc[img_id]['EncodedPixels']
@@ -80,6 +77,7 @@ def get_mask(img_id, df):
             img[start:start+length] = 1
     return img.reshape(shape).T
 
+# Dataset containing id, image and mask, augmented by applying transform
 class ships_mask_dataset(Dataset):
     def __init__(self, names,transform=None):
         self.names=names
@@ -167,28 +165,7 @@ mask_train_set=ships_mask_dataset(nonempty_train_names,mask_tr)
 mask_val_set=ships_mask_dataset(nonempty_val_names,mask_tr)
 mask_val_no_aug_set=ships_mask_dataset(nonempty_val_names,mask_tr_no_aug)
 
-def ex_show():
-    fig=plt.figure(figsize=(2,2))
-    fig.add_subplot(2,2,1)
-    inst=trainset[0]
-    img,mask=inst['image'],inst['mask']
-    img=transforms.ToPILImage()(img)
-    plt.imshow(img)
-    fig.add_subplot(2,2,2)
-    plt.imshow(mask)
-    fig.add_subplot(2,2,3)
-    inst=trainset[1]
-    img,mask=inst['image'],inst['mask']
-    img=transforms.ToPILImage()(img)
-    plt.imshow(img)
-    fig.add_subplot(2,2,4)
-    plt.imshow(mask)
-    plt.show()
-
-
-
 resnet=models.resnet34(pretrained=True)
-
 
 def resnet_feature_dim(size):
     assert size>=224,'image size must be >=224'
@@ -335,9 +312,7 @@ def detection_train(epochs):
             'train_loss':train_loss,'val_loss':val_loss,'val_accuracy':val_accuracy},MODEL_PATH)
     return {'model':rn,'val_loss':val_loss,'val_accuracy':val_accuracy}
 
-
-
-
+# UNet model
 class UNet(nn.Module):
     def __init__(self,rene):
         super(UNet,self).__init__()
@@ -388,26 +363,7 @@ class UNet(nn.Module):
         up=nn.LogSigmoid()(up)
         return up
 
-
-
-
-
-#take gamma=2
-#training UNet:
-#Loss function
-#class FocalLoss(nn.Module):
-#    def __init__(self, gamma):
-#        super().__init__()
-#        self.gamma = gamma
-#    def forward(self,input,target):
-# Input=log(p), target=y=1 or 0
-# pt=p if y=1 of (1-p) if y=0
-# FL=-(1-pt)**g*log(pt) inverse=log(1-p)
-#        inverse=(1-input.exp()).log()
-#        FL=(inverse*self.gamma).exp()*input*target+#(input*self.gamma).exp()*inverse*(1-target)
-#        return FL.mean()
-#gamma=log(2)=0.69314 alpha=0.25
-
+# Intersection over union
 class IoULoss(nn.Module):
     def __init__(self):
         super().__init__()
@@ -421,22 +377,6 @@ class IoULoss(nn.Module):
         assert iou.shape==torch.Size([N]), 'iouloss shape failure'
         loss=1-iou
         return loss.mean()
-
-class CELoss(nn.Module):
-    def __init__(self,alpha):
-        super().__init__()
-        self.alpha = alpha
-
-    def forward(self, input, target):
-        N,H,W=input.shape
-        p=input.exp()
-        alphat=self.alpha*target+(1-self.alpha)*(1-target)
-        pt=p*target+(1-p)*(1-target)
-        loss=-alphat*(pt.log())
-        loss=loss.sum(1).sum(1)
-        assert loss.shape==torch.Size([N]), 'loss shape failure'
-        return loss.mean()
-
 
 class FocalLoss(nn.Module):
     def __init__(self, gamma):
@@ -479,6 +419,7 @@ def IoU(input, target):
 train_mask_loader=DataLoader(mask_train_set,batch_size=BATCH_SIZE)
 val_mask_loader=DataLoader(mask_val_set,batch_size=BATCH_SIZE)
 
+# Tensorboard to keep track of learning
 class Tensorboard:
     def __init__(self, logdir):
         self.writer = tf.summary.FileWriter(logdir)
@@ -492,12 +433,18 @@ class Tensorboard:
         self.writer.add_summary(summary, global_step=global_step)
         self.writer.flush()
 
+# Train the UNet model
 def unet_train(rn,epochs):
+    '''
+    Args:
+        rn: resnet model trained for detection
+        epochs: number of epochs to train
+    Returns:
+        dict:{'model': trained model, 'val_iou': iou error on validation set}
+    '''
     un=UNet(rn)
     un=un.to(device)
-    #maskloss=FocalLoss(gamma=0.69314,alpha=0.25)
     maskloss=MixLoss(gamma=0.69314)
-    #maskloss=IoULoss()
     for x in un.parameters():
         x.requires_grad=True
     lrs=[un.rene.backbone.conv1,un.rene.backbone.bn1,un.rene.backbone.maxpool,un.rene.backbone.layer1,un.rene.backbone.layer2]
