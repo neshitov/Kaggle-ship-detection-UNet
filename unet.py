@@ -43,6 +43,8 @@ for el in exclude_list:
 
 train_names, val_names = train_test_split(all_names, test_size=0.05, random_state=42)
 segmentation_df = pd.read_csv(LABELS).set_index('ImageId')
+num_negative_ex=150000
+num_positive_ex=42556
 
 def get_mask(img_id, df):
     '''
@@ -146,8 +148,10 @@ mask_tr=transform()
 mask_train_set=ships_mask_dataset(nonempty_train_names,mask_tr)
 mask_val_set=ships_mask_dataset(nonempty_val_names,mask_tr)
 
+# Load a pretrained backbone net
 resnet=models.resnet34(pretrained=True)
 
+# Function that computes the shape of the resnet output
 def resnet_feature_dim(size):
     assert size>=224,'image size must be >=224'
     x=torch.from_numpy(np.zeros((1,3,size,size))).float()
@@ -162,9 +166,12 @@ def resnet_feature_dim(size):
     x=resnet.avgpool(x)
     x=x.view(x.size(0),-1)
     return x.shape[1]
+
+# Resnet output features size
 resnet_out_features=resnet_feature_dim(IMG_SIZE)
 
-#resnet_out_features=165888
+# Neural net that outputs 4 intermediate layers of backbone network and adds a 2-layer
+# fc classification layer on top of it. Outputs intermediate features and class prediction
 class myresnet(nn.Module):
     def __init__(self,hidden_layers):
         super(myresnet, self).__init__()
@@ -189,7 +196,14 @@ class myresnet(nn.Module):
         out=self.classifier(out)
         return {'layer0':l0,'layer1':l1,'layer2':l2,'layer3':l3,'layer4':l4,'class':out}
 
+# Function that trains the detection network.
 def detection_train(epochs):
+    '''
+    Args:
+        epochs: number of epochs to train
+    Returns:
+        dict: {model,validation_loss,validation_accuracy}
+    '''
     rn=myresnet(512)
     wght=torch.Tensor([positive_ratio,negative_ratio])
     wght=wght.to(device)
