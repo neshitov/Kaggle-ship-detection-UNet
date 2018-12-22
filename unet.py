@@ -5,6 +5,7 @@ import cv2
 import pickle
 import random
 import progressbar
+import tensorflow as tf
 import torch.nn.functional as F
 import numpy as np
 import cv2 as cv
@@ -20,22 +21,29 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import os
 import pandas as pd
+import numpy as np
+import os
+from PIL import Image
 from sklearn.model_selection import train_test_split
 
-TRAIN = './data/train/' # train folder
-TEST = './data/test/' # test folder
-LOGS= './logs/' # folder to ouput trianing logs
-LABELS='./data/train_ship_segmentations_v2.csv' # path to label data
+#print(os.getcwd())
+TRAIN = '/floyd/input/ships/train/'
+TEST = '/floyd/input/ships/test/'
+LOGS= '/floyd/home/logs/'
+LABELS='/floyd/input/ships/train_ship_segmentations_v2.csv'
 ORIG_IMG_SIZE=768
 IMG_SIZE=224
 BATCH_SIZE=128
 LEARNING_RATE=0.001
 device='cuda'
+#if gpu:
+#    device='cuda'
 exclude_list = ['6384c3e78.jpg','13703f040.jpg', '14715c06d.jpg',  '33e0ff2d5.jpg',
                 '4d4e09f2a.jpg', '877691df8.jpg', '8b909bb20.jpg', 'a8d99130e.jpg',
                 'ad55c3143.jpg', 'c8260c541.jpg', 'd6c7f17c7.jpg', 'dc3e7c901.jpg',
-                'e44dffe88.jpg', 'ef87bad36.jpg', 'f083256d8.jpg'] #corrupted images
+                'e44dffe88.jpg', 'ef87bad36.jpg', 'f083256d8.jpg'] #corrupted image
 all_names = [f for f in os.listdir(TRAIN)]
+all_names=all_names[0:100]
 test_names = [f for f in os.listdir(TEST)]
 for el in exclude_list:
     if(el in all_names): all_names.remove(el)
@@ -45,15 +53,20 @@ train_names, val_names = train_test_split(all_names, test_size=0.05, random_stat
 segmentation_df = pd.read_csv(LABELS).set_index('ImageId')
 num_negative_ex=150000
 num_positive_ex=42556
+positive_ratio=num_positive_ex/(num_positive_ex+num_negative_ex)
+negative_ratio=num_negative_ex/(num_positive_ex+num_negative_ex)
+
+#non_empty_names=[x for x in all_names if (type(segmentation_df.loc[x]['EncodedPixels'])!=float)]
+#with open('nonempty.txt', 'wb') as file:
+#    pickle.dump(non_empty_names, file)
+with open('nonempty.txt', 'rb') as file:
+    non_empty_names=pickle.load(file)
+print('found non empty',len(non_empty_names))
+#non_empty_names=non_empty_names[0:100]
+nonempty_train_names, nonempty_val_names = train_test_split(non_empty_names, test_size=0.05, random_state=42)
+
 
 def get_mask(img_id, df):
-    '''
-    Args:
-        img_id: image id
-        df: dataframe with mask in run-length encoding
-    Returns:
-        img: binary mask image with
-    '''
     shape = (ORIG_IMG_SIZE,ORIG_IMG_SIZE)
     img = np.zeros(shape[0]*shape[1], dtype=np.uint8)
     masks = df.loc[img_id]['EncodedPixels']
@@ -67,7 +80,6 @@ def get_mask(img_id, df):
             img[start:start+length] = 1
     return img.reshape(shape).T
 
-# Dataset containing id, image and mask, augmented by applying transform
 class ships_mask_dataset(Dataset):
     def __init__(self, names,transform=None):
         self.names=names
@@ -83,18 +95,18 @@ class ships_mask_dataset(Dataset):
     def __len__(self):
         return len(self.names)
 
-# Dataset containing id and image only
-class ships_image_dataset(Dataset):
+class test_image_dataset(Dataset):
     def __init__(self, names):
         self.names=names
     def __getitem__(self,id):
         name=self.names[id]
-        img=io.imread(os.path.join(TRAIN,name))
+        img=cv.imread(os.path.join(TEST,name))
+        img = cv.resize(img,(IMG_SIZE,IMG_SIZE))
+        img=transforms.ToTensor()(img)
         return{'id':name,'image':img}
     def __len__(self):
         return len(self.names)
 
-# Dataset for ship detection, contains id, image and class 0=no ship, 1=ship
 class ships_detect_dataset(Dataset):
     def __init__(self, names,transform=None):
         self.names=names
@@ -105,15 +117,14 @@ class ships_detect_dataset(Dataset):
         if type(segmentation_df.loc[name]['EncodedPixels'])==float:
             cl=0
         else:
-            cl=1
+            cl=1 #class 0 no ship class 1 ship
         if self.transform:
             img=self.transform(img)
             cltens=torch.tensor(cl)
         return{'id':name,'image':img,'class':cltens}
     def __len__(self):
         return len(self.names)
-
-# Transformation that transforms image and mask simultaneously
+#transforms both image and mask
 class transform(object):
     def __call__(self,image,mask):
         image = cv.resize(image,(IMG_SIZE,IMG_SIZE))
@@ -126,8 +137,7 @@ class transform(object):
         image=transforms.ToTensor()(image)
         mask=torch.from_numpy(mask)
         return {'image':image,'mask':mask}
-
-# Transformation that transforms image only
+# transforms image only
 class transform_img(object):
     def __call__(self,image):
         image = cv.resize(image,(IMG_SIZE,IMG_SIZE))
@@ -138,20 +148,48 @@ class transform_img(object):
         image=transforms.ToTensor()(image)
         return image
 
-# Construct train and validation set for ship detection
+class transform_no_aug(object):
+    def __call__(self,image,mask):
+        image = cv.resize(image,(IMG_SIZE,IMG_SIZE))
+        mask = cv.resize(mask,(IMG_SIZE,IMG_SIZE))
+        image=transforms.ToTensor()(image)
+        mask=torch.from_numpy(mask)
+        return {'image':image,'mask':mask}
+
 tr=transform_img()
 detect_train_set=ships_detect_dataset(train_names,tr)
 detect_val_set=ships_detect_dataset(val_names,tr)
 
-# Construct train and validation set for mask prediction
 mask_tr=transform()
+mask_tr_no_aug=transform_no_aug()
+
 mask_train_set=ships_mask_dataset(nonempty_train_names,mask_tr)
 mask_val_set=ships_mask_dataset(nonempty_val_names,mask_tr)
+mask_val_no_aug_set=ships_mask_dataset(nonempty_val_names,mask_tr_no_aug)
 
-# Load a pretrained backbone net
+def ex_show():
+    fig=plt.figure(figsize=(2,2))
+    fig.add_subplot(2,2,1)
+    inst=trainset[0]
+    img,mask=inst['image'],inst['mask']
+    img=transforms.ToPILImage()(img)
+    plt.imshow(img)
+    fig.add_subplot(2,2,2)
+    plt.imshow(mask)
+    fig.add_subplot(2,2,3)
+    inst=trainset[1]
+    img,mask=inst['image'],inst['mask']
+    img=transforms.ToPILImage()(img)
+    plt.imshow(img)
+    fig.add_subplot(2,2,4)
+    plt.imshow(mask)
+    plt.show()
+
+
+
 resnet=models.resnet34(pretrained=True)
 
-# Function that computes the shape of the resnet output
+
 def resnet_feature_dim(size):
     assert size>=224,'image size must be >=224'
     x=torch.from_numpy(np.zeros((1,3,size,size))).float()
@@ -166,12 +204,9 @@ def resnet_feature_dim(size):
     x=resnet.avgpool(x)
     x=x.view(x.size(0),-1)
     return x.shape[1]
-
-# Resnet output features size
 resnet_out_features=resnet_feature_dim(IMG_SIZE)
 
-# Neural net that outputs 4 intermediate layers of backbone network and adds a 2-layer
-# fc classification layer on top of it. Outputs intermediate features and class prediction
+#resnet_out_features=165888
 class myresnet(nn.Module):
     def __init__(self,hidden_layers):
         super(myresnet, self).__init__()
@@ -196,14 +231,7 @@ class myresnet(nn.Module):
         out=self.classifier(out)
         return {'layer0':l0,'layer1':l1,'layer2':l2,'layer3':l3,'layer4':l4,'class':out}
 
-# Function that trains the detection network.
 def detection_train(epochs):
-    '''
-    Args:
-        epochs: number of epochs to train
-    Returns:
-        dict: {model,validation_loss,validation_accuracy}
-    '''
     rn=myresnet(512)
     wght=torch.Tensor([positive_ratio,negative_ratio])
     wght=wght.to(device)
@@ -378,6 +406,37 @@ class UNet(nn.Module):
 #        inverse=(1-input.exp()).log()
 #        FL=(inverse*self.gamma).exp()*input*target+#(input*self.gamma).exp()*inverse*(1-target)
 #        return FL.mean()
+#gamma=log(2)=0.69314 alpha=0.25
+
+class IoULoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, input, target):
+        N,H,W=input.shape
+        p=input.exp()
+        intersection=(p*target).sum(1).sum(1)
+        union=(p+target).sum(1).sum(1)-intersection
+        iou=intersection/(union+1)
+        assert iou.shape==torch.Size([N]), 'iouloss shape failure'
+        loss=1-iou
+        return loss.mean()
+
+class CELoss(nn.Module):
+    def __init__(self,alpha):
+        super().__init__()
+        self.alpha = alpha
+
+    def forward(self, input, target):
+        N,H,W=input.shape
+        p=input.exp()
+        alphat=self.alpha*target+(1-self.alpha)*(1-target)
+        pt=p*target+(1-p)*(1-target)
+        loss=-alphat*(pt.log())
+        loss=loss.sum(1).sum(1)
+        assert loss.shape==torch.Size([N]), 'loss shape failure'
+        return loss.mean()
+
 
 class FocalLoss(nn.Module):
     def __init__(self, gamma):
@@ -390,64 +449,83 @@ class FocalLoss(nn.Module):
                              .format(target.size(), input.size()))
 
         max_val = (-input).clamp(min=0)
-        loss = input-input*target + max_val + \
+        loss = input - input * target + max_val + \
             ((-max_val).exp() + (-input - max_val).exp()).log()
 
-        invprobs = F.logsigmoid(-input*(target*2.0 - 1.0))
-        loss = (invprobs*self.gamma).exp()*loss
+        invprobs = F.logsigmoid(-input * (target * 2.0 - 1.0))
+        loss = (invprobs * self.gamma).exp() * loss
 
         return loss.mean()
 
-def DiceLoss(input,target):
-    eps=1
-    input=input.exp()
-    iflat = input.view(-1)
-    tflat = target.view(-1)
-    dl=1-(iflat*tflat.sum()+eps)/(iflat.sum()+tflat.sum()+eps)-(((1-iflat)*(1-tflat).sum()+eps)/((1-iflat).sum()+(1-tflat).sum()+eps))
-    return dl
-
-class Loss(nn.Module):
-    def __init__(self,alpha,gamma):
+class MixLoss(nn.Module):
+    def __init__(self, gamma):
         super().__init__()
-        self.focal=FocalLoss(gamma)
-        self.alpha=alpha
-    def forward(self,input,target):
-        loss=self.alpha*self.focal(input,target)-torch.log(DiceLoss(input,target))
-        return loss.mean()
+        self.iou=IoULoss()
+        self.floss=FocalLoss(gamma)
 
+    def forward(self, input, target):
+        return self.iou(input, target)+0.1*self.floss(input,target)
+
+
+
+#returns average IoU over bunch of images
+def IoU(input, target):
+    N,H,W=input.shape
+    input = (input.exp()>0.5).float()
+    intersection = (input*target).sum(1).sum(1)
+    assert intersection.shape==torch.Size([N]) , 'IoU shape failure'
+    return ((intersection)/ ((input+target).sum(1).sum(1) - intersection + 1.0)).sum()/N
 
 train_mask_loader=DataLoader(mask_train_set,batch_size=BATCH_SIZE)
 val_mask_loader=DataLoader(mask_val_set,batch_size=BATCH_SIZE)
 
+class Tensorboard:
+    def __init__(self, logdir):
+        self.writer = tf.summary.FileWriter(logdir)
+
+    def close(self):
+        self.writer.close()
+
+    def log_scalar(self, tag, value, global_step):
+        summary = tf.Summary()
+        summary.value.add(tag=tag, simple_value=value)
+        self.writer.add_summary(summary, global_step=global_step)
+        self.writer.flush()
 
 def unet_train(rn,epochs):
     un=UNet(rn)
     un=un.to(device)
-    maskloss=Loss(alpha=1,gamma=2)
-
+    #maskloss=FocalLoss(gamma=0.69314,alpha=0.25)
+    maskloss=MixLoss(gamma=0.69314)
+    #maskloss=IoULoss()
+    for x in un.parameters():
+        x.requires_grad=True
+    lrs=[un.rene.backbone.conv1,un.rene.backbone.bn1,un.rene.backbone.maxpool,un.rene.backbone.layer1,un.rene.backbone.layer2]
+    for l in lrs:
+        for x in l.parameters():
+            x.requires_grad=False
     active_parameters=[x for x in un.parameters() if x.requires_grad==True]
     optimizer=optim.Adam(active_parameters,lr=LEARNING_RATE)
-    print('training ',len(active_parameters),' active parameters')
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, verbose=False, threshold=0.00001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08)
+    print('UNet training ',len(active_parameters),' active parameters')
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, verbose=True, threshold=0.00001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08)
 
     current_epoch=0
-    best_val_loss=None
-    train_loss=[]
-    val_loss=[]
+    best_val_iou=None
     MODEL_PATH=os.path.join(LOGS,'best_unet_model.pth')
     if os.path.isfile(MODEL_PATH):
         checkpoint=torch.load(MODEL_PATH)
         current_epoch=checkpoint['epoch']
-        best_val_loss=checkpoint['loss']
-        train_loss=checkpoint['train_loss']
-        val_loss=checkpoint['val_loss']
+        if ('best_val_iou' in checkpoint.keys()):
+            best_val_iou=checkpoint['best_val_iou']
         print('loading model from',MODEL_PATH)
         un.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
 
     print('start training UNet')
+    tensorboard = Tensorboard('tblogs')
     for epoch in range(current_epoch,epochs):
+        torch.cuda.empty_cache()
         print('epoch',epoch)
         running_loss=0
         num_batches=0
@@ -462,15 +540,14 @@ def unet_train(rn,epochs):
             loss.backward()
             optimizer.step()
             running_loss+=loss.item()
-            #if math.isnan(loss.item()):
-            #    print(sample['id'])
-            #    break
-            print(str(num_batches)+'/'+str(trlen)+' batch loss',loss.item())
+            iou=IoU(predict, mask)
+            print(str(num_batches)+'/'+str(trlen)+' batch loss',loss.item(),'batch avg IoU',iou)
             num_batches+=1
-        print('epoch ',epoch,', train loss:',running_loss/num_batches)
-        train_loss.append(running_loss/num_batches)
+        print('epoch ',epoch,'num batches',num_batches, ' train loss:',running_loss/num_batches)
+        tensorboard.log_scalar('train_loss', running_loss/num_batches, epoch)
         running_loss=0
         num_batches=0
+        iou=0
         un.eval()
         for sample in val_mask_loader:
             image,mask=sample['image'],sample['mask']
@@ -479,43 +556,27 @@ def unet_train(rn,epochs):
             mask=torch.squeeze(mask)
             loss=maskloss(predict,mask)
             running_loss+=loss.item()
+            iou+=IoU(predict,mask)
             num_batches+=1
-
+        valiou=iou/num_batches
         valloss=running_loss/num_batches
         scheduler.step(valloss)
-        print('epoch ',epoch,', val loss:',valloss)
-
-        val_loss.append(valloss)
-        if not best_val_loss:
-            best_val_loss=valloss
-            torch.save({'loss': valloss,'epoch': epoch,'model_state_dict': un.state_dict(),'optimizer_state_dict': optimizer.state_dict(),\
-            'train_loss':train_loss,'val_loss':val_loss},MODEL_PATH)
-        elif valloss<best_val_loss:
-            best_val_loss=valloss
-            torch.save({'loss': valloss,'epoch': epoch,'model_state_dict': un.state_dict(),'optimizer_state_dict': optimizer.state_dict(),\
-            'train_loss':train_loss,'val_loss':val_loss},MODEL_PATH)
-    return {'model':un, 'val_loss':val_loss}
+        print('epoch ',epoch,'validation IoU',valiou)
+        tensorboard.log_scalar('val_loss', valloss, epoch)
+        tensorboard.log_scalar('validation IoU', valiou, epoch)
+        val_iou=valiou
+        if not best_val_iou:
+            best_val_iou=val_iou
+            torch.save({'epoch': epoch,'model_state_dict': un.state_dict(),'optimizer_state_dict': optimizer.state_dict(),'best_val_iou':val_iou},MODEL_PATH)
+        elif val_iou>best_val_iou:
+            best_val_iou=val_iou
+            torch.save({'epoch': epoch,'model_state_dict': un.state_dict(),'optimizer_state_dict': optimizer.state_dict(),'best_val_iou':val_iou},MODEL_PATH)
+    return {'model':un, 'val_iou':val_iou}
 
 
 g=detection_train(0)
-rn,valloss=g['model'],g['val_loss']
-print('detection validation loss',valloss)
+rn,valloss,accuracy=g['model'],g['val_loss'],g['val_accuracy']
+print('Loaded ResNet')
 
-#Freeze the resnet parameters
-for param in rn.parameters():
-    rn.requires_grad=False
-
-g=unet_train(rn,50)
-un,valloss=g['model'],g['val_loss']
-img=mask_train_set[0]['image']
-img=img.view(1,3,224,224)
-img=img.to(device)
-mask=un(img)
-mask=mask.exp()>0.5
-mask=mask.to('cpu')
-mask=mask.numpy()
-mask=np.squeeze(mask)
-mask=mask*244
-print(mask)
-mask=Image.fromarray(mask)
-mask.save('mask.png')
+g=unet_train(rn,70)
+un=g['model']
