@@ -35,8 +35,6 @@ For the Kaggle test set the private leaderbord indicates 0.811146 intersection o
 
 Here are some test images and predicted masks:
 
-<img style="float: left;" src="https://raw.githubusercontent.com/neshitov/UNet/master/testimage2.jpg" width="30%" />
-<img src="https://raw.githubusercontent.com/neshitov/UNet/master/mask2.png" width="30%" />
+ <img src="https://raw.githubusercontent.com/neshitov/UNet/master/testimage2.jpg" width="30%" />  <img src="https://raw.githubusercontent.com/neshitov/UNet/master/mask2.png" width="30%" /> 
 
-<img style="float: left;" src="https://raw.githubusercontent.com/neshitov/UNet/master/testimage1.jpg" width="30%" />
-<img src="https://raw.githubusercontent.com/neshitov/UNet/master/mask1.png" width="30%" />
+ <img src="https://raw.githubusercontent.com/neshitov/UNet/master/testimage1.jpg" width="30%" />  <img src="https://raw.githubusercontent.com/neshitov/UNet/master/mask1.png" width="30%" /> 
