@@ -377,23 +377,6 @@ class UNet(nn.Module):
 
 
 
-
-
-#take gamma=2
-#training UNet:
-#Loss function
-#class FocalLoss(nn.Module):
-#    def __init__(self, gamma):
-#        super().__init__()
-#        self.gamma = gamma
-#    def forward(self,input,target):
-# Input=log(p), target=y=1 or 0
-# pt=p if y=1 of (1-p) if y=0
-# FL=-(1-pt)**g*log(pt) inverse=log(1-p)
-#        inverse=(1-input.exp()).log()
-#        FL=(inverse*self.gamma).exp()*input*target+#(input*self.gamma).exp()*inverse*(1-target)
-#        return FL.mean()
-
 class FocalLoss(nn.Module):
     def __init__(self, gamma):
         super().__init__()
