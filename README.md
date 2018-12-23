@@ -12,7 +12,7 @@ This model uses PyTorch 0.4.0, cv2 and skimage for image processing.
 
 ## Data
 
-Data contains 192 thousand images of open sea seashore, docks, etc. Around 40 thousand of images contain ships, and the rest of the images do not. The aim of the model is to predict is to locate separate ships in the image and find the masks of the ships, i.e. parts of the image where ships are located. The labels for the training set are contained in train_ship_segmentation2.csv (data available at https://www.kaggle.com/c/airbus-ship-detection/data). For every ship in every image the file contains a row with image id and the binary mask for the ship in run-length encoding.
+Data contains 192k images of open sea seashore, docks, etc. Around 40k images contain ships, and the rest of the images do not. The aim of the model is to predict is to locate separate ships in the image and find the masks of the ships, i.e. parts of the image where ships are located. The labels for the training set are contained in train_ship_segmentation2.csv (data available at https://www.kaggle.com/c/airbus-ship-detection/data). For every ship in every image the file contains a row with image id and the binary mask for the ship in run-length encoding.
 
 
 ## Files description
