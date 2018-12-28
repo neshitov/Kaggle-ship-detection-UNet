@@ -31,7 +31,7 @@ Model does prediction in two steps. First the modified resnet network predicts i
 
 ## Results
 After training for 50 epochs the network has 0.6005 intersection over union score on the validation set (consisting of images with ships only).
-For the Kaggle test set the private leaderbord indicates 0.811146 intersection over union beta score (with winning solution score 0.85448).
+For the Kaggle test set the private  leaderbord indicates 0.811146 intersection over union beta score (with winning solution score 0.85448).
 
 Here are some test images and predicted masks:
 
