@@ -20,7 +20,7 @@ Data contains 192k images of open sea seashore, docks, etc. Around 40k images co
 The script unet.py does the model construction and training. The script inference.py takes the model constructed in unet.py and performs the prediction. The file nonempty.txt is auxiliary, contains the list of image names that contain ships.
 
 #### Model construction.
-Input images are resized to 224x224. The model is constructed as follows: we start with pretrianed resnet34 model available from torchvision. Two fully connected layers are added on top of wtih 2d softmax output. Then the model is trained on the set of all images to predict if an image contains a ship. All the layers of the resnet34 ecept the last one are frozen during the training. Now the U-Net conists of resnet followed by transpose convolution layers:
+Input images are resized to 224x224.The model is constructed as follows: we start with pretrianed resnet34 model available from torchvision. Two fully connected layers are added on top of wtih 2d softmax output. Then the model is trained on the set of all images to predict if an image contains a ship. All the layers of the resnet34 ecept the last one are frozen during the training. Now the U-Net conists of resnet followed by transpose convolution layers:
 
 <div style="width:image width px; font-size:80%; text-align:center;"><img src="https://lmb.informatik.uni-freiburg.de/people/ronneber/u-net/u-net-architecture.png" width="70%" alt="alternate text"/> U-Net model architecture, https://lmb.informatik.uni-freiburg.de/people/ronneber/u-net/ </div>
 
